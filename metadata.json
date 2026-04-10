@@ -1,0 +1,7 @@
+{
+  "name": "Civic Reporter",
+  "description": "AI-powered civic issue complaint system with RBAC and Department Admin Portal",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

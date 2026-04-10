@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'admin@snapcity.ai' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+    
+    function getAdminDepartment() {
+      return request.auth.token.email == 'admin@snapcity.ai' 
+        ? 'All' 
+        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.department;
+    }
+    
+    function canAdminEditReport(reportDept) {
+      return isAdmin() && (
+        request.auth.token.email == 'admin@snapcity.ai' ||
+        getAdminDepartment() == 'All' || 
+        getAdminDepartment() == null || 
+        getAdminDepartment() == reportDept
+      );
+    }
+    
+    // Users Collection
+    match /users/{userId} {
+      // Anyone can read their own profile
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Users can create their own profile, but cannot set themselves as admin
+      allow create: if isOwner(userId) && 
+        request.resource.data.role == 'citizen' &&
+        request.resource.data.keys().hasOnly(['email', 'role', 'createdAt', 'department']);
+        
+      // Users can update their own profile, but cannot change their role
+      allow update: if isOwner(userId) && 
+        request.resource.data.role == resource.data.role;
+        
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+    
+    // Reports Collection
+    match /reports/{reportId} {
+      // Anyone can read reports (public feed)
+      allow read: if true;
+      
+      // Authenticated users can create reports
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+        
+      // Updating reports
+      allow update: if isAuthenticated() && (
+        // Creator can update (e.g., upvotes, but not status/adminFeedback)
+        (isOwner(resource.data.userId) && 
+         request.resource.data.status == resource.data.status &&
+         request.resource.data.adminFeedback == resource.data.adminFeedback) ||
+        // Admins can update status and feedback if they have department access
+        canAdminEditReport(resource.data.department) ||
+        // Anyone authenticated can upvote (only modifying the upvotes array)
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upvotes']))
+      );
+        
+      // Deleting reports
+      allow delete: if isAuthenticated() && (
+        isOwner(resource.data.userId) || 
+        canAdminEditReport(resource.data.department)
+      );
+    }
+  }
+}
